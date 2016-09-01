@@ -6,14 +6,6 @@ Module for the Sentinel Daemon
 
 ### TODO Items as of 2016-08-26 ###
 #
-#  - Implement proposal checks against available budget
-#    (Requires new dashd rpc function)
-#
-#  - Acquire superblock cycle information from dashd
-#    (Requires new dashd rpc function)
-#
-#  - Limit superblock payments to total available budget
-#
 #  - Set PROPOSAL_QUORUM correctly
 #
 #  - Check if there's a better way to handle amounts than
@@ -193,15 +185,15 @@ def getBlockCount():
     return int( result )
 
 def getSuperblockCycle():
-    # TODO: Add dashd rpc call for this
-    # For now return the testnet value
-    #return 24
-    return 5
+    result = rpc_command( "getgovernanceinfo" )
+    rec = json.loads( result )
+    return int( rec['superblockcycle'] )
 
-def getSuperblockBudgetAllocation():
-    # TODO: Add dashd rpc call for this
-    # For now return an arbitrary value for testing
-    return 1000
+def getSuperblockBudgetAllocation(height=None):
+    if height is None:
+        height = getBlockCount()
+    result = rpc_command( "getsuperblockbudget %d" % ( height ) )
+    return float(result)
 
 def getCurrentBlockHash():
     height = getBlockCount()
@@ -604,6 +596,10 @@ class Superblock(GovernanceObject):
             return False
         if localSuperblock.payment_amounts != self.payment_amounts:
             return False
+        # Limit superblock payments to total available budget.
+        amounts = map( float, self.payment_amounts.split( '|' ) )
+        if sum( amounts ) > getSuperblockBudgetAllocation( self.event_block_height ):
+            return False
         return True
 
 class Proposal(GovernanceObject):
@@ -686,7 +682,12 @@ class Proposal(GovernanceObject):
             printd( "Proposal.isValid Failed to parse amount: %s" % ( self.payment_amount ) )
             return False
 
-        if amountValue > getSuperblockBudgetAllocation():
+        # Check the amount against the smallest of the last and next superblock budget allocations.
+        cycle = getSuperblockCycle()
+        last_superblock_height = ( getBlockCount() / cycle ) * cycle
+        last_allocation = getSuperblockBudgetAllocation( last_superblock_height )
+        next_allocation = getSuperblockBudgetAllocation( last_superblock_height + cycle )
+        if amountValue > min( last_allocation, next_allocation ):
             return False
 
         return True
@@ -968,7 +969,7 @@ class CreateSuperblockTask(SentinelTask):
         printd( "createSuperblock: Start, len( proposals ) = ", len( proposals ) )
         payments = []
         allocated = 0.0
-        budget = getSuperblockBudgetAllocation()
+        budget = getSuperblockBudgetAllocation( self.event_block_height )
         for proposal in proposals:
             # TODO: Note: unparseable amounts should have been rejected
             #       as invalid, but should we be using floats here
