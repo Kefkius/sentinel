@@ -6,8 +6,6 @@ Module for the Sentinel Daemon
 
 ### TODO Items as of 2016-08-26 ###
 #
-#  - Set PROPOSAL_QUORUM correctly
-#
 #  - Check if there's a better way to handle amounts than
 #    using floats (we should probably handle these like
 #    dashd does)
@@ -77,13 +75,6 @@ GOVERNANCE_UPDATE_PERIOD_SECONDS = 30
 # auto vote.
 #SUPERBLOCK_CREATION_DELTA = 10
 SUPERBLOCK_CREATION_DELTA = 1
-
-# Minimum number of absolute yes votes to include a proposal in a superblock
-#PROPOSAL_QUORUM = 10
-# TODO: Should be calculated based on the number of masternodes
-# with an absolute minimum of 10 (maybe 1 for testnet)
-# ie. max( 10, (masternode count)/10 ) 
-PROPOSAL_QUORUM = 0
 
 # For testing, set to True in production
 ENABLE_PROPOSAL_VALIDATION = True
@@ -183,6 +174,14 @@ def getMyVin():
 def getBlockCount():
     result = rpc_command( "getblockcount" )
     return int( result )
+
+def getGovernanceMinQuorum():
+    num_masternodes = int( rpc_command( "masternode count" ) )
+    result = rpc_command( "getgovernanceinfo" )
+    rec = json.loads( result )
+    min_quorum = int( rec['governanceminquorum'] )
+    # The minimum quorum is calculated based on the number of masternodes.
+    return max( min_quorum, num_masternodes / min_quorum )
 
 def getSuperblockCycle():
     result = rpc_command( "getgovernanceinfo" )
@@ -954,7 +953,7 @@ class CreateSuperblockTask(SentinelTask):
         sql += "from %s, %s " % ( propTable, govTable )
         sql += "where %s.id = %s.governance_object_id and " % ( govTable, propTable )
         sql += "object_status = 'NEW' and object_origin = 'REMOTE' and is_valid = 1 and "
-        sql += "%s.absolute_yes_count >= %s " % ( govTable, PROPOSAL_QUORUM )
+        sql += "%s.absolute_yes_count >= %s " % ( govTable, getGovernanceMinQuorum() )
         sql += "ORDER BY %s.absolute_yes_count " % ( govTable )
         c = libmysql.db.cursor()
         c.execute( sql )
