@@ -6,10 +6,6 @@ Module for the Sentinel Daemon
 
 ### TODO Items as of 2016-08-26 ###
 #
-#  - Check if there's a better way to handle amounts than
-#    using floats (we should probably handle these like
-#    dashd does)
-#
 #  - Implement cleanup of old/expired DB objects
 #
 #  - Check rpc submit call for permanent failures and log
@@ -31,6 +27,7 @@ Module for the Sentinel Daemon
 
 import sys
 import os
+from decimal import Decimal
 
 sys.path.append( "lib" )
 sys.path.append( "scripts" ) 
@@ -178,21 +175,21 @@ def getBlockCount():
 def getGovernanceMinQuorum():
     num_masternodes = int( rpc_command( "masternode count" ) )
     result = rpc_command( "getgovernanceinfo" )
-    rec = json.loads( result )
+    rec = json.loads( result, parse_float=Decimal )
     min_quorum = int( rec['governanceminquorum'] )
     # The minimum quorum is calculated based on the number of masternodes.
     return max( min_quorum, num_masternodes / min_quorum )
 
 def getSuperblockCycle():
     result = rpc_command( "getgovernanceinfo" )
-    rec = json.loads( result )
+    rec = json.loads( result, parse_float=Decimal )
     return int( rec['superblockcycle'] )
 
 def getSuperblockBudgetAllocation(height=None):
     if height is None:
         height = getBlockCount()
     result = rpc_command( "getsuperblockbudget %d" % ( height ) )
-    return float(result)
+    return Decimal( result )
 
 def getCurrentBlockHash():
     height = getBlockCount()
@@ -596,7 +593,7 @@ class Superblock(GovernanceObject):
         if localSuperblock.payment_amounts != self.payment_amounts:
             return False
         # Limit superblock payments to total available budget.
-        amounts = map( float, self.payment_amounts.split( '|' ) )
+        amounts = map( Decimal, self.payment_amounts.split( '|' ) )
         if sum( amounts ) > getSuperblockBudgetAllocation( self.event_block_height ):
             return False
         return True
@@ -674,9 +671,8 @@ class Proposal(GovernanceObject):
             printd( "Proposal.isValid Invalid payment address: %s" % ( self.payment_address ) )
             return False
 
-        # TODO: Should we be using floats here or treat decimals properly
         try:
-            amountValue = float( self.payment_amount )
+            amountValue = Decimal( self.payment_amount )
         except:
             printd( "Proposal.isValid Failed to parse amount: %s" % ( self.payment_amount ) )
             return False
@@ -967,13 +963,10 @@ class CreateSuperblockTask(SentinelTask):
     def createSuperblock( self, proposals ):
         printd( "createSuperblock: Start, len( proposals ) = ", len( proposals ) )
         payments = []
-        allocated = 0.0
+        allocated = Decimal( 0.0 )
         budget = getSuperblockBudgetAllocation( self.event_block_height )
         for proposal in proposals:
-            # TODO: Note: unparseable amounts should have been rejected
-            #       as invalid, but should we be using floats here
-            #       (see previous comments).
-            amountValue = float( proposal.payment_amount )
+            amountValue = Decimal( proposal.payment_amount )
             allocated += amountValue
             if allocated > budget:
                 break
